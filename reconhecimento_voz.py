@@ -15,78 +15,6 @@ BAUD_RATE = 9600
 CAMINHO_MODELO_VOSK = "model"
 SAMPLE_RATE = 16000
 
-CENTENAS = {
-    "cem": 100,
-    "cento": 100,
-    "duzentos": 200,
-    "duzentas": 200,
-    "trezentos": 300,
-    "trezentas": 300,
-    "quatrocentos": 400,
-    "quatrocentas": 400,
-    "quinhentos": 500,
-    "quinhentas": 500,
-    "seiscentos": 600,
-    "seiscentas": 600,
-    "setecentos": 700,
-    "setecentas": 700,
-    "oitocentos": 800,
-    "oitocentas": 800,
-    "novecentos": 900,
-    "novecentas": 900,
-}
-
-DEZENAS = {
-    "vinte": 20,
-    "trinta": 30,
-    "quarenta": 40,
-    "cinquenta": 50,
-    "sessenta": 60,
-    "setenta": 70,
-    "oitenta": 80,
-    "noventa": 90,
-}
-
-ESPECIAIS = {
-    "dez": 10,
-    "onze": 11,
-    "doze": 12,
-    "treze": 13,
-    "quatorze": 14,
-    "catorze": 14,
-    "quinze": 15,
-    "dezesseis": 16,
-    "dezessete": 17,
-    "dezoito": 18,
-    "dezenove": 19,
-}
-
-UNIDADES = {
-    "zero": 0,
-    "um": 1,
-    "uma": 1,
-    "dois": 2,
-    "duas": 2,
-    "tres": 3,
-    "quatro": 4,
-    "cinco": 5,
-    "seis": 6,
-    "sete": 7,
-    "oito": 8,
-    "nove": 9,
-}
-
-CONTEXTO_NUMERICO_ANTERIOR = {
-    "para",
-    "em",
-    "de",
-    "a",
-    "distancia",
-    "limite",
-    "angulo",
-    "servo",
-}
-
 VERBOS_LIGAR = {
     "ligar",
     "liga",
@@ -155,11 +83,15 @@ VERBOS_FECHAR = {
 ALVOS_LED = {"led", "leds", "lede", "ledi", "luz", "luzes", "lampada", "lampadas", "iluminacao"}
 ALVOS_FAN = {"ventilador", "ventiladores", "cooler", "culer", "ventoinha"}
 ALVOS_SERVO = {"servo", "portao", "porta", "motor"}
-ALVOS_DIST = {"distancia", "limite", "alcance"}
 ALVOS_AUTO = {"automatico", "automatica", "ultrassonico", "ultrassom", "sensor"}
 ALVOS_MANUAL = {"manual"}
 
 SEPARADOR_CLAUSULAS = re.compile(r"(?:\s*[,;.]\s*|\s+(?:e|depois|entao|tambem)\s+)")
+REGEX_NEGACAO = re.compile(
+    r"\bnao\s+(?:"
+    + "|".join(VERBOS_LIGAR | VERBOS_DESLIGAR | VERBOS_ABRIR | VERBOS_FECHAR)
+    + r")\b"
+)
 
 
 def normalizar_texto(texto: str) -> str:
@@ -171,70 +103,6 @@ def normalizar_texto(texto: str) -> str:
     )
     limpo = re.sub(r"([,;.\n])", r" \1 ", sem_acentos.lower())
     return re.sub(r"\s+", " ", limpo).strip()
-
-
-def _consumir_numero_extenso(tokens: list[str], inicio: int) -> tuple[int, int] | None:
-    """Tenta ler um número por extenso (0 a 999) a partir de tokens[inicio]."""
-    n = len(tokens)
-    tok = tokens[inicio]
-
-    if tok in CENTENAS:
-        valor = CENTENAS[tok]
-        idx = inicio + 1
-        if tok == "cento" and idx + 1 < n and tokens[idx] == "e":
-            prox = tokens[idx + 1]
-            if prox in DEZENAS:
-                valor += DEZENAS[prox]
-                idx += 2
-                if idx + 1 < n and tokens[idx] == "e" and tokens[idx + 1] in UNIDADES and tokens[idx + 1] != "zero":
-                    valor += UNIDADES[tokens[idx + 1]]
-                    idx += 2
-                return valor, idx
-            if prox in ESPECIAIS:
-                return valor + ESPECIAIS[prox], idx + 2
-            if prox in UNIDADES and prox != "zero":
-                return valor + UNIDADES[prox], idx + 2
-        return valor, idx
-
-    if tok in DEZENAS:
-        valor = DEZENAS[tok]
-        idx = inicio + 1
-        if idx + 1 < n and tokens[idx] == "e" and tokens[idx + 1] in UNIDADES and tokens[idx + 1] != "zero":
-            valor += UNIDADES[tokens[idx + 1]]
-            idx += 2
-        return valor, idx
-
-    if tok in ESPECIAIS:
-        return ESPECIAIS[tok], inicio + 1
-
-    if tok in UNIDADES:
-        # Evita converter o artigo "um"/"uma" (ex: "ligar um led") fora de contexto numérico
-        if tok in {"um", "uma"}:
-            anterior = tokens[inicio - 1] if inicio > 0 else ""
-            if anterior not in CONTEXTO_NUMERICO_ANTERIOR:
-                return None
-        return UNIDADES[tok], inicio + 1
-
-    return None
-
-
-def substituir_numeros(texto: str) -> str:
-    """Converte números falados por extenso em dígitos antes da divisão em cláusulas."""
-    tokens = texto.split()
-    resultado: list[str] = []
-    i = 0
-
-    while i < len(tokens):
-        consumido = _consumir_numero_extenso(tokens, i)
-        if consumido is not None:
-            valor, proximo_i = consumido
-            resultado.append(str(valor))
-            i = proximo_i
-        else:
-            resultado.append(tokens[i])
-            i += 1
-
-    return " ".join(resultado)
 
 
 def _detectar_acao(palavras: set[str]) -> str | None:
@@ -250,20 +118,17 @@ def _detectar_acao(palavras: set[str]) -> str | None:
 
 
 def interpretar_comando(texto: str) -> list[str]:
-    """Extrai comandos do protocolo Arduino a partir de texto em português sem IA."""
+    """Extrai comandos de ligar/desligar (e abrir/fechar) para o Arduino sem IA."""
     normalizado = normalizar_texto(texto)
     if not normalizado:
         return []
 
-    com_numeros = substituir_numeros(normalizado)
-    clausulas = [c.strip() for c in SEPARADOR_CLAUSULAS.split(com_numeros) if c.strip()]
-
+    clausulas = [c.strip() for c in SEPARADOR_CLAUSULAS.split(normalizado) if c.strip()]
     comandos: list[str] = []
     ultima_acao: str | None = None
 
     for clausula in clausulas:
-        tokens = clausula.split()
-        palavras = set(tokens)
+        palavras = set(clausula.split())
 
         acao_explicita = _detectar_acao(palavras)
         if acao_explicita is not None:
@@ -272,30 +137,15 @@ def interpretar_comando(texto: str) -> list[str]:
         else:
             acao = ultima_acao
 
-        # Ignora negação direta antes do verbo (ex: "nao ligar a luz")
-        if re.search(r"\bnao\s+(?:" + "|".join(VERBOS_LIGAR | VERBOS_DESLIGAR | VERBOS_ABRIR | VERBOS_FECHAR) + r")\b", clausula):
+        if REGEX_NEGACAO.search(clausula):
             continue
 
-        # 1. Distância limite (DIST:<numero>)
-        if palavras & ALVOS_DIST:
-            match_num = re.search(r"\b(\d+)\b", clausula)
-            if match_num:
-                distancia = int(match_num.group(1))
-                if distancia > 0:
-                    comandos.append(f"DIST:{distancia}")
-
-        # 2. Servo / Portão (SERVO:<0..180>)
         if palavras & ALVOS_SERVO:
-            match_num = re.search(r"\b(\d+)\b", clausula)
-            if match_num:
-                angulo = max(0, min(180, int(match_num.group(1))))
-                comandos.append(f"SERVO:{angulo}")
-            elif acao in {"OPEN", "ON"}:
+            if acao in {"OPEN", "ON"}:
                 comandos.append("SERVO:90")
             elif acao in {"CLOSE", "OFF"}:
                 comandos.append("SERVO:0")
 
-        # 3. Modo Manual / Automático (AUTO:0 / AUTO:1)
         if palavras & ALVOS_MANUAL:
             comandos.append("AUTO:0")
         elif palavras & ALVOS_AUTO:
@@ -304,14 +154,12 @@ def interpretar_comando(texto: str) -> list[str]:
             elif acao == "ON" or "modo automatico" in clausula:
                 comandos.append("AUTO:1")
 
-        # 4. LED / Lâmpada (LED:1 / LED:0)
         if palavras & ALVOS_LED:
             if acao == "ON":
                 comandos.append("LED:1")
             elif acao == "OFF":
                 comandos.append("LED:0")
 
-        # 5. Ventilador / Cooler (FAN:1 / FAN:0)
         if palavras & ALVOS_FAN:
             if acao == "ON":
                 comandos.append("FAN:1")

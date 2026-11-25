@@ -95,7 +95,6 @@ REGEX_NEGACAO = re.compile(
 
 
 def normalizar_texto(texto: str) -> str:
-    """Remove acentos, converte para minúsculas e padroniza pontuações."""
     sem_acentos = "".join(
         c
         for c in unicodedata.normalize("NFKD", texto)
@@ -118,7 +117,6 @@ def _detectar_acao(palavras: set[str]) -> str | None:
 
 
 def interpretar_comando(texto: str) -> list[str]:
-    """Extrai comandos de ligar/desligar (e abrir/fechar) para o Arduino sem IA."""
     normalizado = normalizar_texto(texto)
     if not normalizado:
         return []
